@@ -29,4 +29,26 @@ func TestTimeLatch(t *testing.T) {
 		check(true, tl.TriggeredAt(time.UnixMilli(1766990210011)))
 		check(false, tl.TriggeredAt(time.UnixMilli(1766990210012)))
 	}
+	{
+		now := time.UnixMilli(1766990210020)
+		tl := NewAt(time.UnixMilli(1766990210010), now)
+		count := 0
+		for !tl.AddAt(1*time.Millisecond, now) {
+			count++
+		}
+		if count != 10 {
+			t.Errorf("expected: 10, got: %d", count)
+		}
+		if !tl.Time().Equal(time.UnixMilli(1766990210021)) {
+			t.Errorf("expected: 1766990210021, got: %d", tl.Time().UnixMilli())
+		}
+	}
+	{
+		now := time.UnixMilli(1766990210020)
+		tl := NewAt(time.UnixMilli(1766990210010), now)
+		tl.AdvanceUntilFutureAt(1*time.Millisecond, now)
+		if !tl.Time().Equal(time.UnixMilli(1766990210021)) {
+			t.Errorf("expected: 1766990210021, got: %d", tl.Time().UnixMilli())
+		}
+	}
 }

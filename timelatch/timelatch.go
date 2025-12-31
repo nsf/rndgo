@@ -27,7 +27,11 @@
 //	    time.Sleep(100 * time.Millisecond)
 //	}
 //
-// The target time can be adjusted dynamically with Add(), SetTime(), or SetTimeAt().
+// The target time can be adjusted dynamically with Add(), AddAt(), SetTime(), or
+// SetTimeAt(). All four methods return a boolean indicating whether — at the
+// moment of the update and using the reference time for that call — the current
+// time was before the new target time (true) or not (false).
+//
 // Changing the target time resets the edge-trigger detection appropriately.
 //
 // TimeLatch is safe for concurrent use only if all accesses are serialized
@@ -72,25 +76,45 @@ func NewAt(t, now time.Time) TimeLatch {
 	}
 }
 
-// Add advances the target trigger time by the given duration.
-// It preserves the current "before" state relative to the new target time.
-func (trig *TimeLatch) Add(dur time.Duration) {
-	trig.SetTime(trig.Time().Add(dur))
+// Add advances the target trigger time by the given duration d.
+//
+// It updates the internal edge-detection state based on the current wall-clock time.
+//
+// Returns whether the reference time (time.Now()) was before the new target time
+// at the moment of the update.
+func (trig *TimeLatch) Add(d time.Duration) bool {
+	return trig.SetTime(trig.t.Add(d))
+}
+
+// AddAt advances the target trigger time by the given duration d,
+// using the provided now as the reference time.
+//
+// Returns whether the provided now was before the new target time.
+// Useful for deterministic testing or replay scenarios.
+func (trig *TimeLatch) AddAt(d time.Duration, now time.Time) bool {
+	return trig.SetTimeAt(trig.t.Add(d), now)
 }
 
 // SetTime changes the target trigger time to t.
-// The "before" state is updated based on the current wall-clock time.
-func (trig *TimeLatch) SetTime(t time.Time) {
-	trig.SetTimeAt(t, time.Now())
+//
+// The internal state is updated based on the current wall-clock time (time.Now()).
+//
+// Returns whether the reference time (time.Now()) was before the new target time
+// at the moment of the update. This can be useful for determining whether the
+// change crossed the trigger boundary.
+func (trig *TimeLatch) SetTime(t time.Time) bool {
+	return trig.SetTimeAt(t, time.Now())
 }
 
 // SetTimeAt changes the target trigger time to t and updates the internal
 // state using the provided now as the reference time.
 //
-// This is primarily useful for deterministic testing.
-func (trig *TimeLatch) SetTimeAt(t, now time.Time) {
+// Returns whether now was before t at the time of the call.
+// Primarily useful for deterministic testing or when time is mocked.
+func (trig *TimeLatch) SetTimeAt(t time.Time, now time.Time) bool {
 	trig.before = now.Before(t)
 	trig.t = t
+	return trig.before
 }
 
 // Time returns the current target time that the latch will trigger at.
@@ -116,4 +140,47 @@ func (trig *TimeLatch) TriggeredAt(now time.Time) bool {
 // It behaves the same as TriggeredAt(time.Now()).
 func (trig *TimeLatch) Triggered() bool {
 	return trig.TriggeredAt(time.Now())
+}
+
+// AdvanceUntilFuture adds multiples of dur to the target time until it is
+// once again strictly after the current wall-clock time (time.Now()).
+//
+// It is equivalent to:
+//
+//	for !trig.Add(dur) {
+//	    // keep adding until now < target
+//	}
+//
+// Returns true if the final target time is after now (always true unless dur ≤ 0).
+// Returns false only in degenerate cases (dur ≤ 0, in which case no change occurs).
+//
+// This is useful when you want to push the trigger into the future by at least
+// one dur step, even if the current target is already in the past.
+func (trig *TimeLatch) AdvanceUntilFuture(dur time.Duration) bool {
+	if dur <= 0 {
+		return time.Now().Before(trig.t) // unchanged state
+	}
+
+	now := time.Now()
+	for !now.Before(trig.t) {
+		trig.t = trig.t.Add(dur)
+	}
+	trig.before = true // since we exited when now < t
+	return true
+}
+
+// AdvanceUntilFutureAt is the time-controllable version of AdvanceUntilFuture.
+// It adds multiples of dur until the target is strictly after the provided now.
+//
+// Returns true if the final target is after now, false if dur ≤ 0 (no change).
+func (trig *TimeLatch) AdvanceUntilFutureAt(dur time.Duration, now time.Time) bool {
+	if dur <= 0 {
+		return now.Before(trig.t)
+	}
+
+	for !now.Before(trig.t) {
+		trig.t = trig.t.Add(dur)
+	}
+	trig.before = true
+	return true
 }
